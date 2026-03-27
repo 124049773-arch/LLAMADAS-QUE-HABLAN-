@@ -9,7 +9,6 @@ import plotly.graph_objects as go
 import numpy as np
 import zipfile
 import os
-import glob
 
 WIDTH = 650
 HEIGHT = 450
@@ -91,80 +90,90 @@ init_database()
 
 @st.cache_data
 def load_data():
-    """Carga los datos buscando en todas las ubicaciones posibles"""
+    """Carga los datos del archivo ZIP específico"""
     
-    # Buscar en el directorio actual y subdirectorios
-    archivos_encontrados = []
+    # Buscar el archivo ZIP específico
+    zip_file = "linea-mujeres-cdmx_compressed_1774561829934.zip"
     
-    # Buscar archivos CSV y ZIP
-    for root, dirs, files in os.walk('.'):
-        for file in files:
-            if file.endswith('.csv') or file.endswith('.zip'):
-                archivos_encontrados.append(os.path.join(root, file))
+    if not os.path.exists(zip_file):
+        # Buscar cualquier archivo ZIP
+        archivos_zip = [f for f in os.listdir('.') if f.endswith('.zip')]
+        if archivos_zip:
+            zip_file = archivos_zip[0]
+        else:
+            st.error("❌ No se encontró ningún archivo ZIP")
+            return None
     
-    # Mostrar archivos encontrados para depuración (solo en modo desarrollo)
-    if len(archivos_encontrados) > 0:
-        with st.expander("🔍 Archivos encontrados (click para ver)"):
-            for archivo in archivos_encontrados:
-                st.write(f"- {archivo}")
-    
-    # Primero buscar archivos CSV directos
-    for archivo in archivos_encontrados:
-        if archivo.endswith('.csv'):
-            try:
-                # Intentar diferentes codificaciones
+    try:
+        st.info(f"📦 Leyendo archivo: {zip_file}")
+        
+        with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+            # Listar todos los archivos dentro del ZIP
+            archivos_internos = zip_ref.namelist()
+            st.write(f"Archivos dentro del ZIP: {archivos_internos}")
+            
+            # Buscar archivo CSV
+            archivo_csv = None
+            for archivo in archivos_internos:
+                if archivo.endswith('.csv'):
+                    archivo_csv = archivo
+                    break
+            
+            if archivo_csv is None:
+                st.error("❌ No se encontró ningún archivo CSV dentro del ZIP")
+                return None
+            
+            st.info(f"📄 Leyendo archivo CSV: {archivo_csv}")
+            
+            # Leer el archivo CSV
+            with zip_ref.open(archivo_csv) as csv_file:
+                # Intentar diferentes codificaciones y separadores
                 for encoding in ['latin1', 'utf-8', 'iso-8859-1', 'cp1252']:
                     try:
-                        df = pd.read_csv(archivo, encoding=encoding)
-                        if len(df.columns) > 1:  # Verificar que se leyó correctamente
-                            st.success(f"✅ Datos cargados correctamente desde: {archivo}")
-                            st.success(f"📊 {len(df):,} registros, {len(df.columns)} columnas")
+                        csv_file.seek(0)
+                        # Primero intentar con separador por defecto
+                        df = pd.read_csv(csv_file, encoding=encoding)
+                        
+                        # Si solo tiene una columna, puede ser que el separador sea diferente
+                        if len(df.columns) == 1:
+                            csv_file.seek(0)
+                            # Intentar con separador punto y coma
+                            df = pd.read_csv(csv_file, encoding=encoding, sep=';')
+                        
+                        # Si aún así tiene una columna, verificar si es por comillas
+                        if len(df.columns) == 1:
+                            csv_file.seek(0)
+                            # Leer como texto y procesar manualmente
+                            content = csv_file.read().decode(encoding)
+                            lines = content.split('\n')
+                            
+                            # La primera línea tiene los nombres de las columnas
+                            columnas = lines[0].strip().split(',')
+                            
+                            # Procesar los datos
+                            data = []
+                            for line in lines[1:]:
+                                if line.strip():
+                                    valores = line.strip().split(',')
+                                    if len(valores) == len(columnas):
+                                        data.append(valores)
+                            
+                            df = pd.DataFrame(data, columns=columnas)
+                        
+                        if len(df) > 0:
+                            st.success(f"✅ Datos cargados correctamente: {len(df):,} registros")
+                            st.success(f"📊 Columnas encontradas: {len(df.columns)}")
                             return df
-                    except:
+                            
+                    except Exception as e:
                         continue
-            except Exception as e:
-                continue
-    
-    # Si no hay CSV, buscar archivos ZIP
-    for archivo in archivos_encontrados:
-        if archivo.endswith('.zip'):
-            try:
-                with zipfile.ZipFile(archivo, 'r') as zip_ref:
-                    # Listar archivos dentro del ZIP
-                    archivos_zip = zip_ref.namelist()
-                    
-                    # Buscar archivos CSV dentro del ZIP
-                    for archivo_zip in archivos_zip:
-                        if archivo_zip.endswith('.csv'):
-                            with zip_ref.open(archivo_zip) as csv_file:
-                                # Intentar diferentes codificaciones
-                                for encoding in ['latin1', 'utf-8', 'iso-8859-1', 'cp1252']:
-                                    try:
-                                        csv_file.seek(0)
-                                        df = pd.read_csv(csv_file, encoding=encoding)
-                                        if len(df.columns) > 1:
-                                            st.success(f"✅ Datos cargados correctamente desde ZIP: {archivo}")
-                                            st.success(f"📊 {len(df):,} registros, {len(df.columns)} columnas")
-                                            return df
-                                    except:
-                                        continue
-            except Exception as e:
-                continue
-    
-    # Si no se encontró nada, mostrar error detallado
-    st.error("❌ No se encontró ningún archivo de datos válido")
-    st.write("### 📋 Instrucciones:")
-    st.write("""
-    1. Asegúrate de que tu archivo CSV o ZIP esté subido al repositorio
-    2. El archivo debe estar en la carpeta principal del repositorio
-    3. Puedes subir el archivo directamente desde GitHub:
-       - Ve a tu repositorio
-       - Haz clic en 'Add file' → 'Upload files'
-       - Selecciona tu archivo CSV o ZIP
-       - Haz clic en 'Commit changes'
-    """)
-    
-    return None
+        
+        st.error("❌ No se pudo leer el archivo CSV")
+        return None
+        
+    except Exception as e:
+        st.error(f"Error al leer el archivo ZIP: {e}")
+        return None
 
 # Cargar datos
 df = load_data()
@@ -255,7 +264,6 @@ with c1:
     if 'ocupacion' in df.columns:
         df_ocupacion = df_selection['ocupacion'].dropna()
         if len(df_ocupacion) > 0:
-            # Limitar a top 10 para mejor visualización
             top_ocupaciones = df_ocupacion.value_counts().head(10)
             fig_ocupacion = px.pie(values=top_ocupaciones.values, 
                                    names=top_ocupaciones.index, 
