@@ -7,6 +7,8 @@ import sqlite3
 from datetime import datetime
 import plotly.graph_objects as go
 import numpy as np
+import zipfile
+import os
 
 WIDTH = 650
 HEIGHT = 450
@@ -88,11 +90,124 @@ init_database()
 
 @st.cache_data
 def load_data():
-    df = pd.read_csv("linea-mujeres-cdmx.csv", encoding="latin1")
-    df.columns = df.columns.str.lower().str.strip()
+    """Carga los datos del archivo CSV (comprimido o no)"""
+    
+    # Lista de posibles nombres de archivo (prioridad)
+    posibles_archivos = [
+        "linea-mujeres-cdmx.csv",  # Nombre esperado
+        "datos.csv",  # Nombres alternativos
+        "data.csv",
+        "linea_mujeres.csv"
+    ]
+    
+    # Primero buscar archivo CSV normal
+    for archivo in posibles_archivos:
+        if os.path.exists(archivo):
+            try:
+                st.info(f"📄 Cargando archivo: {archivo}")
+                df = pd.read_csv(archivo, encoding="latin1")
+                df.columns = df.columns.str.lower().str.strip()
+                st.success(f"✅ Datos cargados correctamente: {len(df)} registros")
+                return df
+            except UnicodeDecodeError:
+                try:
+                    df = pd.read_csv(archivo, encoding="utf-8")
+                    df.columns = df.columns.str.lower().str.strip()
+                    st.success(f"✅ Datos cargados correctamente (UTF-8): {len(df)} registros")
+                    return df
+                except:
+                    continue
+            except Exception as e:
+                st.warning(f"No se pudo cargar {archivo}: {e}")
+                continue
+    
+    # Si no hay CSV, buscar archivos ZIP
+    archivos_zip = [f for f in os.listdir('.') if f.endswith('.zip')]
+    
+    if archivos_zip:
+        st.info(f"📦 Se encontraron {len(archivos_zip)} archivos ZIP. Intentando leer...")
+        
+        for zip_file in archivos_zip:
+            try:
+                with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                    # Buscar archivos CSV dentro del ZIP
+                    csv_en_zip = [f for f in zip_ref.namelist() if f.endswith('.csv')]
+                    
+                    if csv_en_zip:
+                        st.info(f"📄 Leyendo {csv_en_zip[0]} desde {zip_file}")
+                        
+                        with zip_ref.open(csv_en_zip[0]) as csv_file:
+                            # Intentar diferentes codificaciones
+                            try:
+                                df = pd.read_csv(csv_file, encoding='latin1')
+                            except:
+                                try:
+                                    csv_file.seek(0)
+                                    df = pd.read_csv(csv_file, encoding='utf-8')
+                                except:
+                                    csv_file.seek(0)
+                                    df = pd.read_csv(csv_file, encoding='iso-8859-1')
+                            
+                            df.columns = df.columns.str.lower().str.strip()
+                            st.success(f"✅ Datos cargados correctamente desde ZIP: {len(df)} registros")
+                            return df
+                    else:
+                        st.warning(f"El archivo {zip_file} no contiene archivos CSV")
+                        
+            except Exception as e:
+                st.error(f"Error al leer {zip_file}: {e}")
+                continue
+    
+    # Si llegamos aquí, no se encontró ningún archivo válido
+    st.error("❌ No se encontró ningún archivo de datos válido")
+    
+    # Mostrar archivos disponibles para depuración
+    st.write("📁 Archivos disponibles en el directorio:")
+    archivos = os.listdir('.')
+    for archivo in archivos[:20]:  # Mostrar primeros 20
+        tamaño = os.path.getsize(archivo) / 1024  # Tamaño en KB
+        st.write(f"- {archivo} ({tamaño:.1f} KB)")
+    
+    if len(archivos) > 20:
+        st.write(f"... y {len(archivos) - 20} archivos más")
+    
+    # Crear datos de ejemplo como fallback (opcional)
+    st.warning("⚠️ Usando datos de ejemplo para demostración")
+    return crear_datos_ejemplo()
+
+def crear_datos_ejemplo():
+    """Crea datos de ejemplo para demostración si no hay archivo"""
+    np.random.seed(42)
+    n_muestras = 500
+    
+    df = pd.DataFrame({
+        'estado_usuaria': np.random.choice(['CDMX', 'Jalisco', 'Nuevo León', 'Puebla', 'Estado de México'], n_muestras),
+        'municipio_usuaria': np.random.choice(['Cuauhtémoc', 'Guadalajara', 'Monterrey', 'Puebla', 'Ecatepec'], n_muestras),
+        'edad': np.random.randint(15, 70, n_muestras),
+        'ocupacion': np.random.choice(['Estudiante', 'Empleada', 'Desempleada', 'Ama de casa', 'Profesionista'], n_muestras),
+        'mes_alta': np.random.randint(1, 13, n_muestras),
+        'servicio': np.random.choice(['Asesoría legal', 'Atención psicológica', 'Ambas', 'Orientación'], n_muestras),
+        'escolaridad': np.random.choice(['Primaria', 'Secundaria', 'Preparatoria', 'Universidad', 'Posgrado'], n_muestras),
+        'estado_civil': np.random.choice(['Soltera', 'Casada', 'Unión libre', 'Divorciada', 'Viuda'], n_muestras),
+        'fecha_alta': pd.date_range('2023-01-01', periods=n_muestras, freq='D'),
+    })
+    
+    # Agregar columnas de temáticas
+    tematicas = ['Violencia psicológica', 'Violencia física', 'Violencia económica', 
+                 'Acoso', 'Violencia familiar', 'Violencia sexual', 'No especificado']
+    
+    for i in range(1, 8):
+        df[f'tematica_{i}'] = np.random.choice(tematicas, n_muestras)
+    
     return df
 
+# Cargar datos
 df = load_data()
+
+# Verificar que los datos se cargaron correctamente
+if df is None:
+    st.error("No se pudieron cargar los datos. Por favor verifica los archivos.")
+    st.stop()
 
 # ==================== FILTROS ====================
 st.sidebar.header("Filtros")
