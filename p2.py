@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 import numpy as np
 import zipfile
 import os
+import glob
 
 WIDTH = 650
 HEIGHT = 450
@@ -90,78 +91,103 @@ init_database()
 
 @st.cache_data
 def load_data():
-    """Carga los datos del archivo CSV (comprimido o no)"""
+    """Carga los datos buscando en todas las ubicaciones posibles"""
     
-    # Buscar archivos ZIP
-    archivos_zip = [f for f in os.listdir('.') if f.endswith('.zip')]
+    # Buscar en el directorio actual y subdirectorios
+    archivos_encontrados = []
     
-    if archivos_zip:
-        for zip_file in archivos_zip:
+    # Buscar archivos CSV y ZIP
+    for root, dirs, files in os.walk('.'):
+        for file in files:
+            if file.endswith('.csv') or file.endswith('.zip'):
+                archivos_encontrados.append(os.path.join(root, file))
+    
+    # Mostrar archivos encontrados para depuración (solo en modo desarrollo)
+    if len(archivos_encontrados) > 0:
+        with st.expander("🔍 Archivos encontrados (click para ver)"):
+            for archivo in archivos_encontrados:
+                st.write(f"- {archivo}")
+    
+    # Primero buscar archivos CSV directos
+    for archivo in archivos_encontrados:
+        if archivo.endswith('.csv'):
             try:
-                with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-                    csv_en_zip = [f for f in zip_ref.namelist() if f.endswith('.csv')]
+                # Intentar diferentes codificaciones
+                for encoding in ['latin1', 'utf-8', 'iso-8859-1', 'cp1252']:
+                    try:
+                        df = pd.read_csv(archivo, encoding=encoding)
+                        if len(df.columns) > 1:  # Verificar que se leyó correctamente
+                            st.success(f"✅ Datos cargados correctamente desde: {archivo}")
+                            st.success(f"📊 {len(df):,} registros, {len(df.columns)} columnas")
+                            return df
+                    except:
+                        continue
+            except Exception as e:
+                continue
+    
+    # Si no hay CSV, buscar archivos ZIP
+    for archivo in archivos_encontrados:
+        if archivo.endswith('.zip'):
+            try:
+                with zipfile.ZipFile(archivo, 'r') as zip_ref:
+                    # Listar archivos dentro del ZIP
+                    archivos_zip = zip_ref.namelist()
                     
-                    if csv_en_zip:
-                        with zip_ref.open(csv_en_zip[0]) as csv_file:
-                            # Leer el archivo como texto primero para inspeccionar
-                            content = csv_file.read().decode('latin1')
-                            
-                            # Verificar si la primera línea tiene las columnas separadas por comas
-                            lines = content.split('\n')
-                            first_line = lines[0]
-                            
-                            # Si la primera línea tiene las columnas en una sola cadena
-                            if ',' in first_line and not '"' in first_line[:100]:
-                                # Las columnas están separadas por comas, usar read_csv normal
-                                csv_file.seek(0)
-                                df = pd.read_csv(csv_file, encoding='latin1', quotechar='"')
-                                st.success(f"✅ Datos cargados correctamente: {len(df)} registros")
-                                return df
-                            else:
-                                # Intentar con diferentes separadores
-                                for sep in [',', ';', '\t', '|']:
+                    # Buscar archivos CSV dentro del ZIP
+                    for archivo_zip in archivos_zip:
+                        if archivo_zip.endswith('.csv'):
+                            with zip_ref.open(archivo_zip) as csv_file:
+                                # Intentar diferentes codificaciones
+                                for encoding in ['latin1', 'utf-8', 'iso-8859-1', 'cp1252']:
                                     try:
                                         csv_file.seek(0)
-                                        df = pd.read_csv(csv_file, encoding='latin1', sep=sep)
+                                        df = pd.read_csv(csv_file, encoding=encoding)
                                         if len(df.columns) > 1:
-                                            st.success(f"✅ Datos cargados correctamente: {len(df)} registros")
+                                            st.success(f"✅ Datos cargados correctamente desde ZIP: {archivo}")
+                                            st.success(f"📊 {len(df):,} registros, {len(df.columns)} columnas")
                                             return df
                                     except:
                                         continue
             except Exception as e:
-                st.error(f"Error al leer archivo: {e}")
                 continue
     
+    # Si no se encontró nada, mostrar error detallado
     st.error("❌ No se encontró ningún archivo de datos válido")
+    st.write("### 📋 Instrucciones:")
+    st.write("""
+    1. Asegúrate de que tu archivo CSV o ZIP esté subido al repositorio
+    2. El archivo debe estar en la carpeta principal del repositorio
+    3. Puedes subir el archivo directamente desde GitHub:
+       - Ve a tu repositorio
+       - Haz clic en 'Add file' → 'Upload files'
+       - Selecciona tu archivo CSV o ZIP
+       - Haz clic en 'Commit changes'
+    """)
+    
     return None
 
 # Cargar datos
 df = load_data()
 
 if df is None:
-    st.error("No se pudieron cargar los datos")
     st.stop()
 
 # ==================== NORMALIZAR NOMBRES DE COLUMNAS ====================
 # Convertir todos los nombres de columnas a minúsculas y quitar espacios
 df.columns = df.columns.str.lower().str.strip()
 
-# Verificar y limpiar nombres de columnas (quitar caracteres especiales)
+# Verificar y limpiar nombres de columnas
 df.columns = df.columns.str.replace('"', '').str.replace("'", "")
 
-# Las columnas esperadas según tu archivo
-# ['folio', 'fecha_alta', 'ano_alta', 'mes_alta', 'dia_alta', 'hora_alta', 'sexo', 
-#  'edad', 'estado_civil', 'ocupacion', 'escolaridad', 'estado_usuaria', 'municipio_usuaria', 
-#  'colonia_usuaria', 'cp_usuaria', 'estado_hechos', 'municipio_hechos', 'colonia_hechos', 
-#  'cp_hechos', 'origen', 'servicio', 'tematica_1', 'tematica_2', 'tematica_3', 
-#  'tematica_4', 'tematica_5', 'tematica_6', 'tematica_7']
-
-# Mostrar información de las columnas para depuración (se puede quitar después)
+# Mostrar información de las columnas para depuración
 with st.expander("📋 Ver estructura de datos (click para expandir)"):
     st.write("**Columnas encontradas:**")
     st.write(df.columns.tolist())
-    st.write("**Primeras filas:**")
+    st.write("**Primeras 5 filas:**")
     st.dataframe(df.head())
+    st.write("**Información básica:**")
+    st.write(f"Total de registros: {len(df):,}")
+    st.write(f"Total de columnas: {len(df.columns)}")
 
 # ==================== FILTROS ====================
 st.sidebar.header("Filtros")
@@ -181,6 +207,7 @@ if 'estado_usuaria' in df.columns:
         df_filtrado_estado = df
 else:
     st.sidebar.warning("⚠️ No se encontró columna 'estado_usuaria'")
+    st.sidebar.write("Columnas disponibles:", df.columns.tolist())
     df_filtrado_estado = df
 
 # Filtro por Municipio
@@ -213,7 +240,7 @@ else:
     col2.metric("Edad Promedio", "No disponible")
 
 if 'municipio_usuaria' in df.columns:
-    if municipio:
+    if 'municipio' in locals() and municipio:
         col3.metric("Municipios Seleccionados", f"{len(municipio)}")
     else:
         col3.metric("Municipios Totales", f"{len(df_selection['municipio_usuaria'].unique())}")
@@ -226,12 +253,14 @@ c1, c2 = st.columns([2,1])
 with c1:
     st.subheader("Distribución por Ocupación")
     if 'ocupacion' in df.columns:
-        # Limpiar datos nulos
         df_ocupacion = df_selection['ocupacion'].dropna()
         if len(df_ocupacion) > 0:
-            fig_ocupacion = px.pie(values=df_ocupacion.value_counts().values, 
-                                   names=df_ocupacion.value_counts().index, 
+            # Limitar a top 10 para mejor visualización
+            top_ocupaciones = df_ocupacion.value_counts().head(10)
+            fig_ocupacion = px.pie(values=top_ocupaciones.values, 
+                                   names=top_ocupaciones.index, 
                                    hole=0.6,
+                                   title="Top 10 Ocupaciones",
                                    color_discrete_sequence=["#E6CCFF","#D8B4FE","#C084FC","#A855F7","#9333EA","#7E22CE"])
             fig_ocupacion.update_layout(width=WIDTH, height=HEIGHT)
             st.plotly_chart(fig_ocupacion, use_container_width=False)
@@ -243,10 +272,10 @@ with c1:
 with c2:
     st.subheader("Análisis gráfico")
     st.write("""
-    - La gráfica muestra la distribución de las ocupaciones de las usuarias que realizaron llamadas.
-    - Se observa qué grupos ocupacionales tienen mayor presencia en los reportes.
-    - Las porciones más grandes indican los sectores laborales con más casos.
-    - Esto permite focalizar campañas de prevención en sectores específicos.
+    - La gráfica muestra la distribución de las ocupaciones de las usuarias.
+    - Se observa qué grupos ocupacionales tienen mayor presencia.
+    - Las porciones más grandes indican los sectores con más casos.
+    - Permite focalizar campañas de prevención en sectores específicos.
     """)
 
 # ==================== GRÁFICA 2: ATENCIONES POR MES ====================
@@ -269,9 +298,8 @@ with c3:
 with c4:
     st.subheader("Análisis gráfico")
     st.write("""
-    - La gráfica muestra la distribución de llamadas por cada mes del año.
-    - Se identifican los meses con mayor y menor número de reportes.
-    - Los picos más altos indican épocas de mayor demanda de atención.
+    - Muestra la distribución de llamadas por mes del año.
+    - Identifica meses con mayor y menor número de reportes.
     - Permite planificar recursos según la demanda estacional.
     """)
 
@@ -285,7 +313,9 @@ with c5:
         df_edad = df_selection['edad'].dropna()
         if len(df_edad) > 0:
             fig_edad = px.histogram(df_edad, x="edad", nbins=bins,
-                title="Distribución de Edades de las Usuarias", color_discrete_sequence=['#FFA200'])
+                title="Distribución de Edades de las Usuarias", 
+                color_discrete_sequence=['#FFA200'],
+                labels={'edad': 'Edad', 'count': 'Número de casos'})
             fig_edad.update_layout(width=WIDTH, height=HEIGHT)
             st.plotly_chart(fig_edad, use_container_width=False)
         else:
@@ -296,10 +326,9 @@ with c5:
 with c6:
     st.subheader("Análisis gráfico")
     st.write("""
-    - La gráfica muestra la concentración de edades de las usuarias que reportan.
-    - Se observa que la mayoría de las personas se concentran entre los 30 y 50 años.
-    - Hay menos casos en edades muy jóvenes y en edades muy avanzadas.
-    - El núcleo más fuerte está en edades medias, los extremos son poco frecuentes.
+    - Muestra la concentración de edades de las usuarias.
+    - La mayoría se concentra entre los 30 y 50 años.
+    - Menos casos en edades extremas.
     """)
 
 # ==================== GRÁFICA 4: FRECUENCIA POR ESTADO CIVIL ====================
@@ -310,7 +339,9 @@ with c7:
         st.subheader("Frecuencia por estado civil")
         conteo_ec = df_selection['estado_civil'].value_counts().reset_index()
         conteo_ec.columns = ['estado_civil', 'total']
-        fig_ec = px.bar(conteo_ec, x='estado_civil', y='total', color_discrete_sequence=["#9333EA"])
+        fig_ec = px.bar(conteo_ec, x='estado_civil', y='total', 
+                       color_discrete_sequence=["#9333EA"],
+                       title="Estado Civil de las Usuarias")
         fig_ec.update_layout(width=WIDTH, height=HEIGHT, xaxis_tickangle=45)
         st.plotly_chart(fig_ec, use_container_width=False)
     else:
@@ -319,16 +350,16 @@ with c7:
 with c8:
     st.subheader("Análisis gráfico")
     st.write("""
-    - La gráfica muestra la distribución por estado civil de las mujeres que reportan.
+    - Distribución por estado civil de las mujeres que reportan.
     - Permite identificar patrones según el estado civil.
-    - Ayuda a entender el contexto familiar de las usuarias.
+    - Ayuda a entender el contexto familiar.
     """)
 
-# ==================== GRÁFICA 5: EVOLUCIÓN MENSUAL DE LLAMADAS ====================
+# ==================== GRÁFICA 5: EVOLUCIÓN TEMPORAL ====================
 c9, c10 = st.columns([2,1])
 
 with c9:
-    st.subheader("Evolución mensual de llamadas")
+    st.subheader("Evolución temporal de llamadas")
     if 'fecha_alta' in df.columns:
         df_temp = df.copy()
         df_temp['fecha_alta'] = pd.to_datetime(df_temp['fecha_alta'], errors='coerce')
@@ -336,7 +367,8 @@ with c9:
         df_temp['anio_mes'] = df_temp['fecha_alta'].dt.to_period('M').astype(str)
         llamadas_por_mes = df_temp.groupby('anio_mes').size().reset_index()
         llamadas_por_mes.columns = ['anio_mes', 'total']
-        fig_ev = px.line(llamadas_por_mes, x='anio_mes', y='total', markers=True)
+        fig_ev = px.line(llamadas_por_mes, x='anio_mes', y='total', markers=True,
+                        title="Evolución Mensual de Llamadas")
         fig_ev.update_layout(width=WIDTH, height=HEIGHT, xaxis_tickangle=90)
         st.plotly_chart(fig_ev, use_container_width=False)
     else:
@@ -345,42 +377,9 @@ with c9:
 with c10:
     st.subheader("Análisis gráfico")
     st.write("""
-    - La gráfica muestra la evolución de las llamadas a lo largo del tiempo.
-    - Permite identificar tendencias y evaluar el impacto de intervenciones.
+    - Evolución de las llamadas a lo largo del tiempo.
+    - Identifica tendencias y evalua el impacto de intervenciones.
     - Los picos indican períodos de mayor demanda.
-    """)
-
-# ==================== GRÁFICA 6: CLUSTERS EDAD VS SERVICIO ====================
-c11, c12 = st.columns([2,1])
-
-with c11:
-    st.subheader("Clusters de llamadas")
-    if 'edad' in df.columns and 'servicio' in df.columns:
-        # Seleccionar solo columnas numéricas
-        df_num = df.select_dtypes(include=['int64','float64']).fillna(df.select_dtypes(include=['int64','float64']).median())
-        if len(df_num.columns) > 0:
-            scaler = StandardScaler()
-            datos_escalados = scaler.fit_transform(df_num)
-            kmeans = KMeans(n_clusters=3, random_state=42)
-            df['cluster'] = kmeans.fit_predict(datos_escalados)
-            
-            fig_cl = px.scatter(df, x='edad', y='servicio', color='cluster', 
-                               color_continuous_scale='viridis',
-                               title="Clusters: Edad vs Servicio")
-            fig_cl.update_layout(width=WIDTH, height=HEIGHT)
-            st.plotly_chart(fig_cl, use_container_width=False)
-        else:
-            st.info("No hay suficientes datos numéricos para clustering")
-    else:
-        st.info("Columnas 'edad' y/o 'servicio' no encontradas")
-
-with c12:
-    st.subheader("Análisis gráfico")
-    st.write("""
-    - El eje horizontal indica la edad de las mujeres que llamaron.
-    - El eje vertical indica el tipo de asesoría requerida.
-    - Los puntos representan las llamadas y el color indica el grupo.
-    - Permite identificar patrones de servicio según rangos de edad.
     """)
 
 # ==================== ANÁLISIS DE TEMÁTICAS ====================
@@ -401,16 +400,7 @@ if tematicas_existentes:
     df_exploded = df_exploded[df_exploded['tematicas_lista'] != 'No especificado']
     df_exploded = df_exploded.rename(columns={'tematicas_lista': 'tematica'})
     
-    # Crear grupos de edad si existe la columna edad
-    if 'edad' in df.columns:
-        df_exploded['edad'] = pd.to_numeric(df_exploded['edad'], errors='coerce')
-        df_exploded['grupo_edad'] = pd.cut(
-            df_exploded['edad'],
-            bins=[0, 18, 25, 35, 45, 100],
-            labels=['<18 años', '18-25 años', '26-35 años', '36-45 años', '>45 años']
-        )
-    
-    # GRÁFICA 7: TOP 15 TEMÁTICAS MÁS REPORTADAS
+    # GRÁFICA: TOP TEMÁTICAS
     c_tem1, c_tem2 = st.columns([2,1])
     
     with c_tem1:
@@ -425,7 +415,8 @@ if tematicas_existentes:
                 orientation='h',
                 labels={'x': 'Número de casos', 'y': 'Temática'},
                 color=top_tematicas.values,
-                color_continuous_scale='Purples_r'
+                color_continuous_scale='Purples_r',
+                title="Problemáticas Más Frecuentes"
             )
             fig_top_tematicas.update_layout(width=WIDTH, height=HEIGHT, yaxis=dict(autorange="reversed"))
             st.plotly_chart(fig_top_tematicas, use_container_width=False)
@@ -435,116 +426,12 @@ if tematicas_existentes:
     with c_tem2:
         st.subheader("Análisis gráfico")
         st.write("""
-        - La gráfica muestra las 15 problemáticas más frecuentes reportadas por las usuarias.
-        - Las barras más largas y de color morado más oscuro representan los problemas más comunes.
-        - Se observa una clara concentración en las primeras 3-4 temáticas.
-        - La temática con mayor número de casos debe ser la principal atención.
+        - Las 15 problemáticas más frecuentes reportadas.
+        - Las barras más largas representan los problemas más comunes.
+        - Las primeras temáticas deben ser prioridad de atención.
         """)
-    
-    # GRÁFICA 8: DISTRIBUCIÓN DE TEMÁTICAS POR GRUPO DE EDAD
-    if 'grupo_edad' in df_exploded.columns:
-        c_tem3, c_tem4 = st.columns([2,1])
-        
-        with c_tem3:
-            st.subheader("Distribución de temáticas por grupo de edad")
-            
-            # Seleccionar top 8 temáticas
-            top8 = df_exploded['tematica'].value_counts().head(8).index
-            df_top8 = df_exploded[df_exploded['tematica'].isin(top8)]
-            
-            if len(df_top8) > 0:
-                # Crear tabla de contingencia
-                edad_tematica = pd.crosstab(df_top8['tematica'], df_top8['grupo_edad'])
-                
-                # Colores de morado para grupos de edad
-                colores_morados = ['#4A0E4E', '#6B2E6B', '#8B4B8B', '#AA6EAA', '#C999C9']
-                
-                fig_tematica_edad = px.bar(
-                    edad_tematica,
-                    labels={'value': 'Número de casos', 'tematica': 'Temática', 'variable': 'Grupo de Edad'},
-                    color_discrete_sequence=colores_morados,
-                    barmode='stack'
-                )
-                fig_tematica_edad.update_layout(width=WIDTH, height=HEIGHT, xaxis_tickangle=45)
-                st.plotly_chart(fig_tematica_edad, use_container_width=False)
-            else:
-                st.info("No hay suficientes datos para este análisis")
-        
-        with c_tem4:
-            st.subheader("Análisis gráfico")
-            st.write("""
-            - La gráfica muestra cómo se distribuyen las problemáticas según la edad de las usuarias.
-            - El color morado más oscuro representa al grupo de menor edad (<18 años).
-            - El color morado más claro representa al grupo de mayor edad (>45 años).
-            - Permite identificar qué problemáticas afectan más a cada grupo etario.
-            """)
-
 else:
-    st.warning("No se encontraron columnas de temáticas en los datos")
-
-# ==================== ANÁLISIS DE ESCOLARIDAD ====================
-st.header("Análisis de Escolaridad")
-
-if 'escolaridad' in df.columns:
-    # GRÁFICA 9: DISTRIBUCIÓN DE ESCOLARIDAD
-    c_esc1, c_esc2 = st.columns([2,1])
-    
-    with c_esc1:
-        st.subheader("Distribución de Escolaridad")
-        
-        escolaridad_counts = df_selection['escolaridad'].value_counts().reset_index()
-        escolaridad_counts.columns = ['escolaridad', 'total']
-        
-        if len(escolaridad_counts) > 0:
-            fig_esc = px.bar(escolaridad_counts, x='escolaridad', y='total', 
-                           color_discrete_sequence=["#9333EA"],
-                           title="Nivel Educativo de las Usuarias")
-            fig_esc.update_layout(width=WIDTH, height=HEIGHT, xaxis_tickangle=45)
-            st.plotly_chart(fig_esc, use_container_width=False)
-        else:
-            st.info("No hay datos de escolaridad disponibles")
-    
-    with c_esc2:
-        st.subheader("Análisis gráfico")
-        st.write("""
-        - La gráfica muestra la distribución de niveles educativos de las usuarias.
-        - Permite identificar qué grupos educativos son más propensos a reportar.
-        - Ayuda a diseñar campañas de prevención adaptadas a cada nivel.
-        - Los niveles con mayor frecuencia indican dónde focalizar recursos.
-        """)
-    
-    # GRÁFICA 10: ESCOLARIDAD VS ESTADO CIVIL
-    if 'estado_civil' in df.columns:
-        c_esc3, c_esc4 = st.columns([2,1])
-        
-        with c_esc3:
-            st.subheader("Escolaridad vs Estado Civil")
-            
-            escolaridad_estado = pd.crosstab(df_selection['escolaridad'], df_selection['estado_civil'])
-            
-            if len(escolaridad_estado) > 0:
-                fig_esc_estado = px.bar(
-                    escolaridad_estado,
-                    barmode='stack',
-                    title="Estado Civil por Nivel Educativo",
-                    labels={'value': 'Número de casos', 'escolaridad': 'Nivel Educativo', 'variable': 'Estado Civil'},
-                    color_discrete_sequence=px.colors.qualitative.Set3
-                )
-                fig_esc_estado.update_layout(width=WIDTH, height=HEIGHT, xaxis_tickangle=45)
-                st.plotly_chart(fig_esc_estado, use_container_width=False)
-            else:
-                st.info("No hay suficientes datos para este análisis")
-        
-        with c_esc4:
-            st.subheader("Análisis gráfico")
-            st.write("""
-            - La gráfica muestra la distribución de estados civiles según el nivel educativo.
-            - Permite identificar patrones socio-familiares según nivel de estudios.
-            - Ayuda a entender el contexto de las usuarias.
-            """)
-
-else:
-    st.warning("No se encontró la columna 'escolaridad' en los datos")
+    st.info("No se encontraron columnas de temáticas en los datos")
 
 # ==================== CUESTIONARIO ====================
 st.markdown("---")
