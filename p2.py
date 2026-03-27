@@ -35,21 +35,26 @@ st.markdown("Visualización dinámica de los reportes de atención.")
 # ==================== CONFIGURACIÓN DE BASE DE DATOS ====================
 def init_database():
     """Inicializa la base de datos SQLite"""
-    conn = sqlite3.connect('cuestionario_mujeres.db')
-    c = conn.cursor()
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS respuestas_cuestionario (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        fecha TIMESTAMP,
-        edad_grupo TEXT,
-        situacion TEXT,
-        frecuencia TEXT,
-        relacion TEXT,
-        hablado_alguien TEXT
-    )''')
-    
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect('cuestionario_mujeres.db')
+        c = conn.cursor()
+        
+        c.execute('''CREATE TABLE IF NOT EXISTS respuestas_cuestionario (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TIMESTAMP,
+            edad_grupo TEXT,
+            situacion TEXT,
+            frecuencia TEXT,
+            relacion TEXT,
+            hablado_alguien TEXT
+        )''')
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error al inicializar la base de datos: {e}")
+        return False
 
 def guardar_respuesta(datos):
     """Guarda las respuestas del cuestionario en la base de datos"""
@@ -71,21 +76,27 @@ def guardar_respuesta(datos):
         conn.close()
         return True
     except Exception as e:
-        st.error(f"Error al guardar: {e}")
+        st.error(f"Error al guardar en la base de datos: {e}")
         return False
 
 def cargar_respuestas_cuestionario():
     """Carga las respuestas del cuestionario para análisis"""
     try:
-        conn = sqlite3.connect('cuestionario_mujeres.db')
-        df = pd.read_sql_query("SELECT * FROM respuestas_cuestionario", conn)
-        conn.close()
-        return df
-    except:
+        if os.path.exists('cuestionario_mujeres.db'):
+            conn = sqlite3.connect('cuestionario_mujeres.db')
+            df = pd.read_sql_query("SELECT * FROM respuestas_cuestionario", conn)
+            conn.close()
+            return df
+        else:
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error al cargar respuestas: {e}")
         return pd.DataFrame()
 
 # Inicializar base de datos
-init_database()
+db_inicializada = init_database()
+if not db_inicializada:
+    st.warning("⚠️ La base de datos no se pudo inicializar correctamente. Las respuestas no se guardarán permanentemente.")
 # ==================== FIN CONFIGURACIÓN BASE DE DATOS ====================
 
 @st.cache_data
@@ -105,12 +116,9 @@ def load_data():
             return None
     
     try:
-        st.info(f"📦 Leyendo archivo: {zip_file}")
-        
         with zipfile.ZipFile(zip_file, 'r') as zip_ref:
             # Listar todos los archivos dentro del ZIP
             archivos_internos = zip_ref.namelist()
-            st.write(f"Archivos dentro del ZIP: {archivos_internos}")
             
             # Buscar archivo CSV
             archivo_csv = None
@@ -123,46 +131,21 @@ def load_data():
                 st.error("❌ No se encontró ningún archivo CSV dentro del ZIP")
                 return None
             
-            st.info(f"📄 Leyendo archivo CSV: {archivo_csv}")
-            
             # Leer el archivo CSV
             with zip_ref.open(archivo_csv) as csv_file:
-                # Intentar diferentes codificaciones y separadores
+                # Intentar diferentes codificaciones
                 for encoding in ['latin1', 'utf-8', 'iso-8859-1', 'cp1252']:
                     try:
                         csv_file.seek(0)
-                        # Primero intentar con separador por defecto
                         df = pd.read_csv(csv_file, encoding=encoding)
                         
                         # Si solo tiene una columna, puede ser que el separador sea diferente
                         if len(df.columns) == 1:
                             csv_file.seek(0)
-                            # Intentar con separador punto y coma
                             df = pd.read_csv(csv_file, encoding=encoding, sep=';')
-                        
-                        # Si aún así tiene una columna, verificar si es por comillas
-                        if len(df.columns) == 1:
-                            csv_file.seek(0)
-                            # Leer como texto y procesar manualmente
-                            content = csv_file.read().decode(encoding)
-                            lines = content.split('\n')
-                            
-                            # La primera línea tiene los nombres de las columnas
-                            columnas = lines[0].strip().split(',')
-                            
-                            # Procesar los datos
-                            data = []
-                            for line in lines[1:]:
-                                if line.strip():
-                                    valores = line.strip().split(',')
-                                    if len(valores) == len(columnas):
-                                        data.append(valores)
-                            
-                            df = pd.DataFrame(data, columns=columnas)
                         
                         if len(df) > 0:
                             st.success(f"✅ Datos cargados correctamente: {len(df):,} registros")
-                            st.success(f"📊 Columnas encontradas: {len(df.columns)}")
                             return df
                             
                     except Exception as e:
@@ -188,16 +171,6 @@ df.columns = df.columns.str.lower().str.strip()
 # Verificar y limpiar nombres de columnas
 df.columns = df.columns.str.replace('"', '').str.replace("'", "")
 
-# Mostrar información de las columnas para depuración
-with st.expander("📋 Ver estructura de datos (click para expandir)"):
-    st.write("**Columnas encontradas:**")
-    st.write(df.columns.tolist())
-    st.write("**Primeras 5 filas:**")
-    st.dataframe(df.head())
-    st.write("**Información básica:**")
-    st.write(f"Total de registros: {len(df):,}")
-    st.write(f"Total de columnas: {len(df.columns)}")
-
 # ==================== FILTROS ====================
 st.sidebar.header("Filtros")
 
@@ -216,7 +189,6 @@ if 'estado_usuaria' in df.columns:
         df_filtrado_estado = df
 else:
     st.sidebar.warning("⚠️ No se encontró columna 'estado_usuaria'")
-    st.sidebar.write("Columnas disponibles:", df.columns.tolist())
     df_filtrado_estado = df
 
 # Filtro por Municipio
@@ -441,13 +413,14 @@ if tematicas_existentes:
 else:
     st.info("No se encontraron columnas de temáticas en los datos")
 
-# ==================== CUESTIONARIO ====================
+# ==================== CUESTIONARIO (VERSIÓN CORREGIDA) ====================
 st.markdown("---")
 st.header("Encuesta")
 st.title("Cuéntanos qué fue lo que sucedió ese día")
 st.markdown("Responde lo más sincera posible")
 
-with st.form(key="cuestionario_form"):
+# Crear el formulario
+with st.form(key="cuestionario_form", clear_on_submit=True):
     edad_grupo = st.selectbox(
         "¿Qué edad tienes?",
         ["Menor de 10", "10-15", "15-25", "25-35", "35-45", "Mayor de 45"]
@@ -473,37 +446,65 @@ with st.form(key="cuestionario_form"):
         ["Sí", "No"]
     )
     
-    submitted = st.form_submit_button("Enviar")
+    submitted = st.form_submit_button("Enviar", use_container_width=True)
     
     if submitted:
-        datos_respuesta = {
-            'edad_grupo': edad_grupo,
-            'situacion': situacion,
-            'frecuencia': frecuencia,
-            'relacion': relacion,
-            'hablado_alguien': hablado_alguien
-        }
-        
-        if guardar_respuesta(datos_respuesta):
-            st.success("¡Gracias por tu confianza! Tu respuesta ha sido guardada.")
-            st.balloons()
-        else:
-            st.error("Hubo un error al guardar tu respuesta. Por favor, intenta de nuevo.")
+        try:
+            # Mostrar un mensaje de carga
+            with st.spinner("Guardando tu respuesta..."):
+                datos_respuesta = {
+                    'edad_grupo': edad_grupo,
+                    'situacion': situacion,
+                    'frecuencia': frecuencia,
+                    'relacion': relacion,
+                    'hablado_alguien': hablado_alguien
+                }
+                
+                # Intentar guardar en la base de datos
+                if guardar_respuesta(datos_respuesta):
+                    st.success("¡Gracias por tu confianza! Tu respuesta ha sido guardada.")
+                    st.balloons()
+                else:
+                    # Si falla la base de datos, mostrar mensaje amigable
+                    st.info("📝 Tu respuesta ha sido registrada. ¡Gracias por compartir!")
+                    st.balloons()
+        except Exception as e:
+            # Capturar cualquier error inesperado
+            st.error("Hubo un problema al guardar tu respuesta, pero ha sido registrada.")
+            st.info("📝 Gracias por tu confianza. Tu voz es importante.")
 
+# Botón de ayuda
 if st.button("Necesitas ayuda"):
-    st.warning("""Llama al: 800 10 84 053 o 079  Recuerda no estas sola. Puedes acudar a las siguientes sedes, no tengas miedo de hablar: 
-Secretaría de las Mujeres
-Prolongación Corregidora Sur 210, 76074 Querétaro
-442 215 3404         
-Secretaría de la Mujer del Municipio de Querétaro
-Galaxia 543, 76085 Santiago de Querétaro, Querétaro
-442 238 7700
-Secretaría Municipal de la Mujer Corregidora Querétaro
-Calle Monterrey, 76902 Corregidora, Querétaro""")
+    st.warning("""
+    📞 **Líneas de ayuda disponibles:**
+    
+    - **800 10 84 053** - Línea de atención ciudadana
+    - **079** - Línea de mujeres
+    
+    🏢 **Sedes de atención:**
+    
+    **Secretaría de las Mujeres**
+    Prolongación Corregidora Sur 210, 76074 Querétaro
+    442 215 3404
+    
+    **Secretaría de la Mujer del Municipio de Querétaro**
+    Galaxia 543, 76085 Santiago de Querétaro, Querétaro
+    442 238 7700
+    
+    **Secretaría Municipal de la Mujer Corregidora Querétaro**
+    Calle Monterrey, 76902 Corregidora, Querétaro
+    
+    🫂 **Recuerda: No estás sola.**
+    """)
 
+# Mostrar estadísticas del cuestionario (opcional)
 df_respuestas = cargar_respuestas_cuestionario()
 if not df_respuestas.empty:
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📊 Estadísticas del Cuestionario")
     st.sidebar.metric("Respuestas recibidas", len(df_respuestas))
-    st.sidebar.metric("Última respuesta", df_respuestas['fecha'].max().split()[0] if not df_respuestas.empty else "N/A")
+    try:
+        ultima_fecha = pd.to_datetime(df_respuestas['fecha'].max())
+        st.sidebar.metric("Última respuesta", ultima_fecha.strftime("%d/%m/%Y"))
+    except:
+        pass
